@@ -1,0 +1,151 @@
+﻿@page "/azure-ai"
+@rendermode InteractiveServer
+@using AzureAIBlazorApp.Services.Interfaces
+@using Azure.AI.TextAnalytics
+@using Azure.AI.Vision.ImageAnalysis;
+@using AzureAIBlazorApp.Utils
+
+<PageTitle>Azure AI Services</PageTitle>
+
+<h1>Analize text or images using Azure AI Services</h1>
+
+<InputRadioGroup @bind-Value="serviceType">
+    <InputRadio Value="1" /> Text
+    <InputRadio Value="2" /> Image
+</InputRadioGroup>
+
+<br />
+
+@if (serviceType == 1)
+{
+    <InputTextArea @bind-Value="description" rows="4" cols="150"></InputTextArea>
+}
+else
+{
+    <InputFile OnChange="@OnInputFileChange" accept=".jpg,.png" />
+}
+
+<br />
+
+<button class="btn btn-primary" @onclick="SubmitAsync">Submit</button>
+
+<br />
+
+@if (showResult)
+{
+    <h2>Result</h2>
+    @if (serviceType == 1 && documentSentiment != null)
+    {
+        <h4>Sentiment</h4>
+
+        <p><b>Sentences:</b></p>
+        <ul>
+            @foreach (var sentence in documentSentiment.Sentences)
+            {
+                <li>@sentence.Text</li>
+            }
+        </ul>
+        <p><b>Sentiment:</b> @documentSentiment.Sentiment</p>
+        <p><b>Confidence Scores</b></p>
+        <ul>
+            <li><b>Positive:</b> @documentSentiment.ConfidenceScores.Positive</li>
+            <li><b>Neutral:</b> @documentSentiment.ConfidenceScores.Neutral</li>
+            <li><b>Negative:</b> @documentSentiment.ConfidenceScores.Negative</li>
+        </ul>
+
+        <h4>Key Phrases</h4>
+        <ul>
+            @foreach (var keyPhrase in keyPhrases)
+            {
+                <li>@keyPhrase</li>
+            }
+        </ul>
+    }
+    else if(serviceType == 2 && imageAnalysisResult != null)
+    {
+        @if (!string.IsNullOrEmpty(base64Data))
+        {
+            <img src="@base64Data" />
+            <br />
+        }
+
+        <p><b>Caption:</b> @imageAnalysisResult.Caption.Text</p>
+        <p><b>Tags</b></p>
+        <ul>
+            @foreach (DetectedTag tag in imageAnalysisResult.Tags.Values)
+            {
+                <li>@tag.Name</li>
+            }
+        </ul>
+        <p><b>Objects</b></p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Object</th>
+                    <th>Bounding box</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (DetectedObject obj in imageAnalysisResult.Objects.Values)
+                {
+                    <tr>
+                        <td>@obj.Tags.First().Name</td>
+                        <td>@obj.BoundingBox.ToString()</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private int serviceType = 1;
+    private bool showResult = false;
+
+    // Text
+    private string description = string.Empty;
+    private DocumentSentiment documentSentiment;
+    private KeyPhraseCollection keyPhrases;
+
+    // Image
+    private IBrowserFile file;
+    private string base64Data;
+    private ImageAnalysisResult imageAnalysisResult;
+
+    [Inject]
+    private IAzureLanguageService azureLanguageService { get; set; }
+
+    [Inject]
+    private IAzureVisionService azureVisionService { get; set; }
+
+    private void OnInputFileChange(InputFileChangeEventArgs e)
+    {
+        this.file = e.File;
+    }
+
+    private async Task ShowImageAsync()
+    {
+        var resizedFile = await this.file.RequestImageFileAsync(this.file.ContentType, 400, 400);
+        var buffer = new byte[resizedFile.Size];
+        await resizedFile.OpenReadStream().ReadAsync(buffer);
+        this.base64Data = $"data:{this.file.ContentType};base64,{Convert.ToBase64String(buffer)}";
+    }
+
+    private async Task SubmitAsync()
+    {
+        this.showResult = false;
+        if (this.serviceType == 1 && !string.IsNullOrEmpty(this.description))
+        {
+            this.documentSentiment = azureLanguageService.AnalyzeSentiment(this.description);
+            this.keyPhrases = azureLanguageService.ExtractKeyPhrases(this.description);
+            this.showResult = true;
+        }
+        else if (this.serviceType == 2 && this.file != null)
+        {
+            await this.ShowImageAsync();
+            var memoryStream = await StreamUtil.ToMemoryStreamAsync(this.file.OpenReadStream());
+            this.imageAnalysisResult = azureVisionService.AnalizeImage(memoryStream);
+            this.showResult = true;
+        }
+    }
+}
